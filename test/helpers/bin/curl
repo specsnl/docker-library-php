@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#
+# Stands in for curl on PATH. Serves php.net's release JSON from
+# test/fixtures/release-<version>.json and logs every call to CURL_LOG.
+#
+# Set CURL_FAIL to make every call fail the way an unreachable host does. Any
+# URL without a fixture fails like a 404 under curl -f.
+set -Eeuo pipefail
+
+printf '%s\n' "$*" >> "${CURL_LOG:?}"
+
+if [ -n "${CURL_FAIL:-}" ]; then
+	echo >&2 'curl: (6) Could not resolve host: www.php.net'
+	exit 6
+fi
+
+url="${*: -1}"
+case "$url" in
+	'https://www.php.net/releases/index.php?json&version='*)
+		fixture="${FIXTURES:?}/release-${url##*&version=}.json"
+		if [ -f "$fixture" ]; then
+			cat "$fixture"
+			exit 0
+		fi
+		;;
+esac
+
+echo >&2 "curl: (22) The requested URL returned error: 404 (fake curl has no fixture for $url)"
+exit 22

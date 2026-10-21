@@ -1,0 +1,51 @@
+# Config options: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Every entry stays clear of the files this fork shares with upstream
+# docker-library/php, so Dependabot never opens a PR against one of them.
+
+version: 2
+updates:
+  # Not at /: Dependabot's /dockerfile/i filename match would pick up
+  # upstream's Dockerfile-linux.template there.
+  - package-ecosystem: docker
+    directory: /test
+    schedule:
+      interval: weekly
+    labels:
+      - docker
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      debian-minor-patch:
+        patterns:
+          - debian
+        update-types:
+          - minor
+          - patch
+
+  # Only matches compose.yml.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - docker
+    commit-message:
+      prefix: build
+      include: scope
+
+  # Upstream's workflows are excluded; add any workflow upstream adds here in
+  # the same merge.
+  - package-ecosystem: github-actions
+    directory: /
+    exclude-paths:
+      - .github/workflows/ci.yml
+      - .github/workflows/verify-templating.yml
+    schedule:
+      interval: weekly
+    labels:
+      - github-actions
+    commit-message:
+      prefix: build
+      include: scope
