@@ -1,0 +1,108 @@
+# https://taskfile.dev
+version: "3"
+
+silent: true
+
+tasks:
+
+  dc:
+    desc: Run a docker compose command
+    internal: true
+    vars:
+      FIXUID:
+        sh: echo ${FIXUID:-$(id -u)}
+      FIXGID:
+        sh: echo ${FIXGID:-$(id -g)}
+    cmds:
+      - FIXUID={{ .FIXUID }} FIXGID={{ .FIXGID }} docker compose {{ .SUB_CMD }} {{ .CLI_ARGS }}
+
+  dc:run:*:
+    desc: Run a one-off docker compose command
+    vars:
+      SERVICE: '{{ index .MATCH 0 }}'
+      RUN_FLAGS: '{{ .RUN_FLAGS | default "" }}'
+      COMPOSE_SERVICES:
+        sh: docker compose config --services
+    cmds:
+      - task: dc
+        vars:
+          SUB_CMD: 'run --rm {{ .RUN_FLAGS }} {{ .SERVICE }} {{ .SUB_CMD }}'
+          CLI_ARGS: '{{ .CLI_ARGS }}'
+    requires:
+      vars:
+        - name: SERVICE
+          enum:
+            ref: .COMPOSE_SERVICES | splitLines | compact
+
+  jq-template:
+    desc: Fetch the .jq-template.awk that apply-templates.sh renders with
+    summary: |
+      apply-templates.sh downloads it itself whenever the script is newer than
+      the file, but the bats container has no network. This fetches the same
+      pinned URL on the host beforehand. The file is gitignored.
+    internal: true
+    vars:
+      URL:
+        sh: grep -o "https://github.com/docker-library/bashbrew/raw/[^']*" apply-templates.sh
+    cmds:
+      - curl -fsSL -o .jq-template.awk '{{ .URL }}'
+    status:
+      - test -f .jq-template.awk
+      - test ! apply-templates.sh -nt .jq-template.awk
+
+  test:
+    desc: Run the bats suites in test/ without network access
+    summary: |
+      Extra arguments go to bats, e.g. `task test -- --filter resolve_source`.
+    cmds:
+      - task: jq-template
+      - task: dc:run:bats
+        vars:
+          RUN_FLAGS: --build
+          SUB_CMD: '{{ .CLI_ARGS }} test/'
+          CLI_ARGS: ''
+
+  lint:docker:
+    desc: Lint the test Dockerfile with hadolint
+    cmds:
+      - task: dc:run:hadolint
+        vars:
+          SUB_CMD: hadolint test/bats.Dockerfile
+
+  lint:shell:
+    desc: Lint the scripts and the test suite with shellcheck
+    cmds:
+      - task: dc:run:shellcheck
+        vars:
+          SUB_CMD: >-
+            shellcheck --external-sources
+            scripts/*.sh
+            test/*.bats
+            test/helpers/*.bash
+            test/helpers/bin/*
+
+  checkall:
+    desc: Run every check — shellcheck, hadolint and the bats suite
+    summary: |
+      The full local check sequence: lint:shell, lint:docker, test.
+
+      Every step reports; none of them writes to the working tree. Run this
+      before opening a pull request.
+    cmds:
+      - task: lint:shell
+      - task: lint:docker
+      - task: test
+
+  cleanup:
+    desc: Cleanup workspace
+    summary: |
+      Cleanup of almost all gitignored files, untracked files and development containers.
+
+      The following files/dirs are excluded: none
+    cmds:
+      - task: dc
+        vars:
+          SUB_CMD: down --rmi local --remove-orphans
+      - git clean
+        -xd
+        --force

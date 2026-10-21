@@ -1,0 +1,29 @@
+services:
+  bats:
+    user: ${FIXUID:-1000}:${FIXGID:-1000}
+    build:
+      context: test
+      dockerfile: bats.Dockerfile
+    # The suite is hermetic; a test that reaches for php.net fails instead.
+    network_mode: none
+    working_dir: /src
+    environment:
+      HOME: /tmp
+    volumes:
+      - .:/src:ro
+
+  hadolint:
+    user: ${FIXUID:-1000}:${FIXGID:-1000}
+    # Latest version: https://hub.docker.com/r/hadolint/hadolint/tags
+    image: hadolint/hadolint:v2.15.1
+    working_dir: /src
+    volumes:
+      - .:/src:ro
+
+  shellcheck:
+    user: ${FIXUID:-1000}:${FIXGID:-1000}
+    # Latest version: https://hub.docker.com/r/koalaman/shellcheck-alpine/tags
+    image: koalaman/shellcheck-alpine:v0.11.0
+    working_dir: /src
+    volumes:
+      - .:/src:ro
