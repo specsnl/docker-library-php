@@ -1,7 +1,7 @@
 # Shared setup for the bats suites.
 #
 # The repo is mounted read-only, so every test works on a copy of the files
-# pin-version.sh and apply-templates.sh need, under BATS_TEST_TMPDIR.
+# the scripts and apply-templates.sh need, under BATS_TEST_TMPDIR.
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 
@@ -24,6 +24,7 @@ setup_workdir() {
 	mkdir -p "$WORKDIR"
 	cp -p \
 		"$REPO_ROOT/versions.json" \
+		"$REPO_ROOT/build-config.json" \
 		"$REPO_ROOT/Dockerfile-linux.template" \
 		"$REPO_ROOT/apply-templates.sh" \
 		"$REPO_ROOT/.jq-template.awk" \
@@ -34,6 +35,8 @@ setup_workdir() {
 
 	# shellcheck disable=SC2034 # used by the suites that load this file
 	PIN_VERSION="$WORKDIR/scripts/pin-version.sh"
+	# shellcheck disable=SC2034 # used by the suites that load this file
+	SELECT_MATRIX="$WORKDIR/scripts/select-matrix.sh"
 
 	export FIXTURES="$REPO_ROOT/test/fixtures"
 	export CURL_LOG="$BATS_TEST_TMPDIR/curl.log"
