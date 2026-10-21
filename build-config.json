@@ -1,0 +1,5 @@
+{
+  "families": { "debian": true, "alpine": false },
+  "variants": ["cli", "fpm", "apache"],
+  "platforms": ["linux/amd64", "linux/arm64"]
+}
