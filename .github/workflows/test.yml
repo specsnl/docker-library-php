@@ -1,0 +1,47 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/**'
+      - 'test/**'
+      - 'compose.yml'
+      - 'Taskfile.dist.yml'
+      - '.hadolint.yml'
+      - '.github/workflows/test.yml'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'test/**'
+      - 'compose.yml'
+      - 'Taskfile.dist.yml'
+      - '.hadolint.yml'
+      - '.github/workflows/test.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checkall:
+    name: Checkall
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Task
+        uses: go-task/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run every check
+        run: task checkall
+
+      - name: Check the working tree is unchanged
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
