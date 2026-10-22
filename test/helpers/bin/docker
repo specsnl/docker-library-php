@@ -6,6 +6,9 @@
 #
 # Set DOCKER_FAIL to make every call whose logged line contains that string
 # fail the way a failing command in the container does.
+#
+# A call whose last argument is php -r 'echo PHP_VERSION;' prints
+# DOCKER_PHP_VERSION instead, without a newline, as PHP does.
 set -Eeuo pipefail
 
 printf '%s\n' "$*" >> "${DOCKER_LOG:?}"
@@ -14,3 +17,7 @@ if [ -n "${DOCKER_FAIL:-}" ] && [[ "$*" == *"$DOCKER_FAIL"* ]]; then
 	echo >&2 "fake docker: failing as DOCKER_FAIL='$DOCKER_FAIL' asks"
 	exit 1
 fi
+
+case "${*: -1}" in
+	"php -r 'echo PHP_VERSION;'") printf '%s' "${DOCKER_PHP_VERSION:?}" ;;
+esac

@@ -227,9 +227,10 @@ jobs:
       - name: Smoke test
         env:
           VARIANT: ${{ matrix.variant }}
+          PHP_VERSION: ${{ inputs.php_version }}
         run: |
           digests=( "$RUNNER_TEMP"/digests/* )
-          scripts/smoke-test.sh "$IMAGE@sha256:${digests[0]##*/}" "$VARIANT"
+          scripts/smoke-test.sh "$IMAGE@sha256:${digests[0]##*/}" "$VARIANT" "$PHP_VERSION"
 
   merge:
     name: Merge ${{ matrix.directory }}

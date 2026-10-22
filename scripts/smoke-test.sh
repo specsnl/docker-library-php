@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 #
 # Runs the basic checks against a pushed image before any tag points at it:
-# php -v and php -m for every variant, plus a config test for fpm and apache.
+# php -v, the PHP version and php -m for every variant, plus a config test for
+# fpm and apache. The PHP version must equal the one the run asked for, so a
+# pinning mistake fails here instead of getting tagged.
 #
 # The image is addressed by digest, so the checks run against exactly what the
 # build pushed. Each check runs under sh -c, which every image has, whereas
 # bash is missing from Alpine's.
 #
-# Usage: scripts/smoke-test.sh <image@digest> <variant>
-#   e.g. scripts/smoke-test.sh ghcr.io/specsnl/php@sha256:<hex> fpm
+# Usage: scripts/smoke-test.sh <image@digest> <variant> <php_version>
+#   e.g. scripts/smoke-test.sh ghcr.io/specsnl/php@sha256:<hex> fpm 8.4.13
 set -Eeuo pipefail
 
+readonly VERSION_CHECK="php -r 'echo PHP_VERSION;'"
+
 usage() {
-	echo >&2 "usage: ${0##*/} <image@digest> <variant>    e.g. ${0##*/} ghcr.io/specsnl/php@sha256:<hex> fpm"
+	echo >&2 "usage: ${0##*/} <image@digest> <variant> <php_version>    e.g. ${0##*/} ghcr.io/specsnl/php@sha256:<hex> fpm 8.4.13"
 	exit 2
 }
 
@@ -20,6 +24,7 @@ usage() {
 # without checks of its own, such as zts, gets the common ones only.
 checks_for() {
 	echo 'php -v'
+	echo "$VERSION_CHECK"
 	echo 'php -m'
 
 	case "$1" in
@@ -28,16 +33,41 @@ checks_for() {
 	esac
 }
 
+verify_version() {
+	local image="$1" expected="$2" actual="$3"
+
+	if [ "$actual" != "$expected" ]; then
+		echo >&2 "error: $image runs PHP $actual, expected $expected"
+		return 1
+	fi
+}
+
+# Compares a check's output where it has something to compare. The other
+# checks pass as long as they exit 0.
+verify_output() {
+	local image="$1" version="$2" check="$3" output="$4"
+
+	case "$check" in
+		"$VERSION_CHECK") verify_version "$image" "$version" "$output" ;;
+	esac
+}
+
 # Runs every check, so one run reports all that fail, and fails if any did.
 run_checks() {
-	local image="$1" variant="$2" check
+	local image="$1" variant="$2" version="$3" check output status
 	local -a checks failed=()
 	mapfile -t checks < <(checks_for "$variant")
 
 	for check in "${checks[@]}"; do
 		echo "--- $check"
-		if ! docker run --rm "$image" sh -c "$check"; then
+		status=0
+		output="$(docker run --rm "$image" sh -c "$check")" || status=$?
+		[ -z "$output" ] || printf '%s\n' "$output"
+
+		if [ "$status" -ne 0 ]; then
 			echo >&2 "error: '$check' failed in $image"
+			failed+=( "$check" )
+		elif ! verify_output "$image" "$version" "$check" "$output"; then
 			failed+=( "$check" )
 		fi
 	done
@@ -51,16 +81,20 @@ run_checks() {
 }
 
 main() {
-	[ "$#" -eq 2 ] || usage
-	local image="$1" variant="$2"
+	[ "$#" -eq 3 ] || usage
+	local image="$1" variant="$2" version="$3"
 
 	if [[ ! "$image" =~ ^[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
 		echo >&2 "error: '$image' is not an image reference by digest like ghcr.io/specsnl/php@sha256:<hex>"
 		usage
 	fi
 	[ -n "$variant" ] || usage
+	if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+((alpha|beta|RC)[0-9]+)?$ ]]; then
+		echo >&2 "error: '$version' is not a PHP version like 8.4.13"
+		usage
+	fi
 
-	run_checks "$image" "$variant"
+	run_checks "$image" "$variant" "$version"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
