@@ -32,15 +32,21 @@ current_84() {
 	assert_equal "$branch" 8.4
 	assert_equal "$patch" 13
 	assert_equal "$prerelease" ''
+	assert_equal "$key" 8.4
 }
 
-@test "parse_version rejects pre-releases as not supported yet" {
+@test "parse_version maps a pre-release to its branch's -rc entry" {
 	source_pin_version
 
-	for version in 8.5.0RC1 8.5.0beta2 8.5.0alpha1; do
-		run parse_version "$version"
-		assert_failure 1
-		assert_output --partial "'$version' are not supported yet"
+	local version suffix
+	for suffix in RC1 beta2 alpha1; do
+		version="8.6.0$suffix"
+		parse_version "$version"
+
+		assert_equal "$branch" 8.6
+		assert_equal "$patch" 0
+		assert_equal "$prerelease" "$suffix"
+		assert_equal "$key" 8.6-rc
 	done
 }
 
@@ -51,6 +57,23 @@ current_84() {
 		run parse_version "$version"
 		assert_failure 2
 		assert_output --partial 'usage:'
+	done
+}
+
+# is_prerelease
+
+@test "is_prerelease tells RC, beta and alpha versions from stable ones" {
+	source_pin_version
+
+	local version
+	for version in 8.6.0RC1 8.6.0beta2 8.6.0alpha1; do
+		run is_prerelease "$version"
+		assert_success
+	done
+
+	for version in 8.4.13 8.6.0; do
+		run is_prerelease "$version"
+		assert_failure
 	done
 }
 
@@ -139,6 +162,31 @@ current_84() {
 	assert_file_not_exists "$WORKDIR/8.1"
 	assert_file_empty "$CURL_LOG"
 	cmp "$REPO_ROOT/versions.json" "$WORKDIR/versions.json"
+}
+
+@test "pinning a pre-release while build-config.json disables them fails before fetching anything" {
+	run jq -e '.prerelease == false' "$REPO_ROOT/build-config.json"
+	assert_success
+
+	run "$PIN_VERSION" 8.4.0RC4
+
+	assert_failure 1
+	assert_output "error: pre-release versions like '8.4.0RC4' are disabled; set \"prerelease\": true in build-config.json to build them"
+	assert_file_empty "$CURL_LOG"
+	cmp "$REPO_ROOT/versions.json" "$WORKDIR/versions.json"
+}
+
+@test "pinning a pre-release whose -rc entry is null says to merge upstream first" {
+	edit_json build-config.json '.prerelease = true'
+	edit_json versions.json '.["8.4-rc"] = null'
+	cp "$WORKDIR/versions.json" "$BATS_TEST_TMPDIR/versions.json"
+
+	run "$PIN_VERSION" 8.4.0RC4
+
+	assert_failure 1
+	assert_output 'error: PHP 8.4-rc is not in versions.json; merge upstream docker-library/php first'
+	assert_file_empty "$CURL_LOG"
+	cmp "$BATS_TEST_TMPDIR/versions.json" "$WORKDIR/versions.json"
 }
 
 @test "pin-version.sh without arguments prints usage" {

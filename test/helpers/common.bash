@@ -47,3 +47,10 @@ setup_workdir() {
 	: > "$DOCKER_LOG"
 	PATH="$REPO_ROOT/test/helpers/bin:$PATH"
 }
+
+# Applies a jq filter to a JSON file in WORKDIR in place.
+edit_json() {
+	local file="$WORKDIR/$1" json
+	json="$(jq "$2" "$file")"
+	printf '%s\n' "$json" > "$file"
+}

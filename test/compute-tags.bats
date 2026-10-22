@@ -154,11 +154,22 @@ source_compute_tags() {
 	done
 }
 
-@test "a pre-release version is rejected as not supported yet" {
-	run "$COMPUTE_TAGS" 8.5.0RC1 fpm trixie false
+@test "a pre-release gets only its exact tag" {
+	run "$COMPUTE_TAGS" 8.6.0RC1 fpm trixie false
 
-	assert_failure 1
-	assert_output "error: pre-release versions like '8.5.0RC1' are not supported yet"
+	assert_success
+	assert_output 'ghcr.io/specsnl/php:8.6.0RC1-fpm-trixie'
+}
+
+@test "a pre-release gets only its exact tag even with update_floating_tags, and says so" {
+	local version
+	for version in 8.6.0RC1 8.6.0beta2 8.6.0alpha1; do
+		run --separate-stderr "$COMPUTE_TAGS" "$version" cli trixie true
+
+		assert_success
+		assert_output "ghcr.io/specsnl/php:$version-cli-trixie"
+		assert_equal "$stderr" "note: $version is a pre-release, so the floating tags stay where they are"
+	done
 }
 
 @test "a variant or suite that cannot go into a tag prints usage" {

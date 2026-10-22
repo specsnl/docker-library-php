@@ -29,13 +29,6 @@ source_select_matrix() {
 	cd "$WORKDIR"
 }
 
-# Applies a jq filter to a JSON file in WORKDIR in place.
-edit_json() {
-	local file="$WORKDIR/$1" json
-	json="$(jq "$2" "$file")"
-	printf '%s\n' "$json" > "$file"
-}
-
 # Runs select-matrix.sh, expecting success, and sets MATRIX to the JSON.
 select_matrix() {
 	run "$SELECT_MATRIX" "$@"

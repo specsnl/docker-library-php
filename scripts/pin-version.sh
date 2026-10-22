@@ -19,10 +19,14 @@ die() {
 	exit 1
 }
 
-# Splits a version into the globals branch, patch and prerelease.
-#
-# The regex already recognises the pre-release suffixes, so enabling them is
-# a matter of dropping the rejection below.
+# Succeeds for a pre-release version like 8.6.0RC1.
+is_prerelease() {
+	[[ "$1" =~ (alpha|beta|RC)[0-9]+$ ]]
+}
+
+# Splits a version into the globals branch, patch and prerelease, and sets key
+# to its versions.json entry: the branch, or <branch>-rc for a pre-release, as
+# upstream keys them. The rendered directories take the same name.
 parse_version() {
 	local version="$1"
 
@@ -35,10 +39,7 @@ parse_version() {
 	# shellcheck disable=SC2034 # part of the parsed result, for callers
 	patch="${BASH_REMATCH[2]}"
 	prerelease="${BASH_REMATCH[3]}"
-
-	if [ -n "$prerelease" ]; then
-		die "pre-release versions like '$version' are not supported yet"
-	fi
+	key="$branch${prerelease:+-rc}"
 }
 
 # Sets the globals url, ascUrl and sha256 for a release.
@@ -80,8 +81,12 @@ main() {
 
 	parse_version "$version"
 
-	if ! jq -e --arg branch "$branch" '.[$branch] | type == "object"' versions.json > /dev/null; then
-		die "PHP $branch is not in versions.json; merge upstream docker-library/php first"
+	if [ -n "$prerelease" ] && ! jq -e '.prerelease == true' build-config.json > /dev/null; then
+		die "pre-release versions like '$version' are disabled; set \"prerelease\": true in build-config.json to build them"
+	fi
+
+	if ! jq -e --arg key "$key" '.[$key] | type == "object"' versions.json > /dev/null; then
+		die "PHP $key is not in versions.json; merge upstream docker-library/php first"
 	fi
 
 	resolve_source "$version"
@@ -91,19 +96,19 @@ main() {
 	local json
 	json="$(
 		jq \
-			--arg branch "$branch" \
+			--arg key "$key" \
 			--arg version "$version" \
 			--arg url "$url" \
 			--arg ascUrl "$ascUrl" \
 			--arg sha256 "$sha256" \
-			'.[$branch] += { version: $version, url: $url, ascUrl: $ascUrl, sha256: $sha256 }' \
+			'.[$key] += { version: $version, url: $url, ascUrl: $ascUrl, sha256: $sha256 }' \
 			versions.json
 	)"
 	printf '%s\n' "$json" > versions.json
 
-	echo "$branch: $version"
+	echo "$key: $version"
 
-	./apply-templates.sh "$branch"
+	./apply-templates.sh "$key"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
