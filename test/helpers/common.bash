@@ -39,12 +39,16 @@ setup_workdir() {
 	SELECT_MATRIX="$WORKDIR/scripts/select-matrix.sh"
 	# shellcheck disable=SC2034 # used by the suites that load this file
 	SMOKE_TEST="$WORKDIR/scripts/smoke-test.sh"
+	# shellcheck disable=SC2034 # used by the suites that load this file
+	CHECK_BASE_IMAGES="$WORKDIR/scripts/check-base-images.sh"
 
 	export FIXTURES="$REPO_ROOT/test/fixtures"
 	export CURL_LOG="$BATS_TEST_TMPDIR/curl.log"
 	: > "$CURL_LOG"
 	export DOCKER_LOG="$BATS_TEST_TMPDIR/docker.log"
 	: > "$DOCKER_LOG"
+	export DOCKER_INSPECT="$BATS_TEST_TMPDIR/inspect"
+	mkdir -p "$DOCKER_INSPECT"
 	PATH="$REPO_ROOT/test/helpers/bin:$PATH"
 }
 

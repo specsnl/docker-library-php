@@ -10,6 +10,11 @@
 # A call whose last argument is php -m prints the file DOCKER_PHP_MODULES names
 # instead, and one whose last argument is php -r 'echo PHP_VERSION;' prints
 # DOCKER_PHP_VERSION, without a newline, as PHP does.
+#
+# A buildx imagetools inspect call prints the file in DOCKER_INSPECT named
+# after its last argument, the image reference, with every / and : turned into
+# _, whatever its --format asks for. Without one it fails as a missing image
+# does.
 set -Eeuo pipefail
 
 printf '%s\n' "$*" >> "${DOCKER_LOG:?}"
@@ -22,4 +27,16 @@ fi
 case "${*: -1}" in
 	'php -m') cat "${DOCKER_PHP_MODULES:?}" ;;
 	"php -r 'echo PHP_VERSION;'") printf '%s' "${DOCKER_PHP_VERSION:?}" ;;
+esac
+
+case "$*" in
+	'buildx imagetools inspect '*)
+		ref="${*: -1}"
+		fixture="${DOCKER_INSPECT:?}/${ref//[\/:]/_}"
+		if [ ! -f "$fixture" ]; then
+			echo >&2 "ERROR: $ref: not found (fake docker has no $fixture)"
+			exit 1
+		fi
+		cat "$fixture"
+		;;
 esac
