@@ -17,7 +17,7 @@ started by hand.
 
 | Input                  | Default               | Meaning                                                                                                                    |
 |------------------------|-----------------------|----------------------------------------------------------------------------------------------------------------------------|
-| `php_version`          | (required)            | Exact stable PHP version, e.g. `8.4.13`. Pre-releases (`RC`, `alpha`, `beta`) are rejected for now.                        |
+| `php_version`          | (required)            | Exact PHP version, e.g. `8.4.13`. Pre-releases like `8.6.0RC1` need `prerelease` in `build-config.json` (see below).       |
 | `variants`             | `build-config.json`'s | Comma-separated override, e.g. `cli` or `cli,zts`.                                                                         |
 | `base`                 | newest Debian suite   | Suite to build on, e.g. `bookworm`. The default is the first Debian suite `versions.json` lists for the branch.            |
 | `update_floating_tags` | `false`               | Also move the floating tags (see below). Refused together with a `base` override.                                          |
@@ -56,8 +56,8 @@ newest patch of the **newest** branch: on the newest `8.3` patch it would also p
 at 8.3.
 
 The suite-less tags (`8-fpm`, `fpm`, `latest`) follow the default suite, which is why the workflow refuses
-`update_floating_tags` together with a `base` override. Pre-releases will never move floating tags, whatever the input
-says.
+`update_floating_tags` together with a `base` override. Pre-releases never move the floating tags, whatever the input
+says: `8.6.0RC1` with `fpm` on `trixie` only gets `ghcr.io/specsnl/php:8.6.0RC1-fpm-trixie`.
 
 ## The fork rule: only add files
 
@@ -99,7 +99,8 @@ Upstream's workflows are left unedited. Each one either runs as-is or is switche
 {
   "families": { "debian": true, "alpine": false },
   "variants": ["cli", "fpm", "apache"],
-  "platforms": ["linux/amd64", "linux/arm64"]
+  "platforms": ["linux/amd64", "linux/arm64"],
+  "prerelease": false
 }
 ```
 
@@ -107,6 +108,18 @@ Upstream's workflows are left unedited. Each one either runs as-is or is switche
 - **`variants`**: the variants a run builds when the `variants` input is empty.
 - **`platforms`**: the platforms each variant is built for. Each needs a native GitHub-hosted runner, so only
   `linux/amd64` and `linux/arm64` are supported.
+- **`prerelease`**: whether `php_version` may be a pre-release (`RC`, `alpha` or `beta`). With `false`, the prepare
+  job rejects one before it fetches anything.
+
+**Building a pre-release:** set `"prerelease": true`, then run the workflow with e.g. `php_version: 8.6.0RC1`. Note
+that:
+
+- Upstream keys pre-releases as `<branch>-rc` in `versions.json`, with Dockerfiles under `<branch>-rc/`. That entry
+  is `null` whenever php.net has no pre-release of the branch, so merge upstream (or pass `upstream_ref`) first.
+- The tarball and checksum come from php.net's
+  [pre-release builds](https://www.php.net/pre-release-builds.php?format=json), which list only the newest
+  pre-release of each branch. Older pre-releases can't be built; the error names the ones that can.
+- A pre-release only ever gets its exact tag (see [Tag scheme](#tag-scheme)).
 
 **Turning ZTS back on:** add `"zts"` to `variants`, or pass `variants: cli,zts` for a single run. Upstream dropped the
 separate `zts` variant from PHP 8.6 on (every 8.6+ image is built with ZTS), so `zts` only exists for 8.5 and older.
@@ -150,9 +163,9 @@ to `scripts/` comes with a matching case in `test/*.bats`.** The suite fakes `cu
 
 3. There should be no conflicts, because the fork only adds files. If one happens, a file that upstream also owns was
    modified. Move that change into one of the fork's own files instead of resolving the conflict in place.
-4. Merge **before** building a new PHP minor (e.g. the first `8.6.x`) or on a new Debian suite. `pin-version.sh` and
-   `select-matrix.sh` only know the branches and suites in `versions.json`, and fail with
-   `merge upstream docker-library/php first` for anything else.
+4. Merge **before** building a new PHP minor (e.g. the first `8.6.x`), a new pre-release or on a new Debian suite.
+   `pin-version.sh` and `select-matrix.sh` only know the branches (and `<branch>-rc` entries) and suites in
+   `versions.json`, and fail with `merge upstream docker-library/php first` for anything else.
 
 To try a newer upstream without merging it, pass its ref as `upstream_ref`. The run lays upstream's tree over this
 branch before pinning, which only works because the fork adds files and never changes upstream's.
