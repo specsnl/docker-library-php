@@ -61,6 +61,25 @@ The suite-less tags (`8-fpm`, `fpm`, `latest`) follow the default suite, which i
 `update_floating_tags` together with a `base` override. Pre-releases never move the floating tags, whatever the input
 says: `8.6.0RC1` with `fpm` on `trixie` only gets `ghcr.io/specsnl/php:8.6.0RC1-fpm-trixie`.
 
+## Base image check
+
+The **Base image check** workflow ([`base-image-check.yml`](workflows/base-image-check.yml)) runs every day, and by
+hand from Actions → Base image check → Run workflow. It only reports: it never builds, pushes or retags an image.
+
+1. [`scripts/list-tags.sh`](../scripts/list-tags.sh) lists every tag of `ghcr.io/specsnl/php` through the GitHub
+   API.
+2. [`scripts/check-base-images.sh`](../scripts/check-base-images.sh) reads each tag's provenance attestation, which
+   records the digest of the `debian:<suite>-slim` the build pulled, and compares it with the digest that tag of
+   `debian` points at on Docker Hub now.
+3. When any tag is behind, it opens an issue titled **Published images are behind their base image** that lists them,
+   or updates the open one (with a comment, so the change notifies). Once every tag is current again, it closes the
+   issue.
+
+To pick up the update, run the [Build workflow](#running-a-build) again with the same `php_version`, and with
+`update_floating_tags` when a floating tag is listed. The list includes old patch releases too; leave those alone if
+nothing still uses them. Pre-release tags are skipped: php.net only serves the newest pre-release of a branch, so an
+older one can't be rebuilt. A tag that cannot be fetched or has no provenance fails the run instead of reporting.
+
 ## The fork rule: only add files
 
 Upstream commits the rendered `<branch>/<suite>/<variant>/Dockerfile` files, `versions.json`, the templates and its own
@@ -68,7 +87,7 @@ workflows. Any edit to one of those conflicts on the next upstream merge. So the
 modifies a file upstream commits:
 
 - `.github/README.md`, `.github/dependabot.yml`
-- `.github/workflows/build.yml`, `.github/workflows/test.yml`
+- `.github/workflows/build.yml`, `.github/workflows/base-image-check.yml`, `.github/workflows/test.yml`
 - `build-config.json`, `compose.yml`, `Taskfile.dist.yml`, `.hadolint.yml`
 - `scripts/`, `test/`
 
@@ -183,9 +202,7 @@ If upstream adds or renames a workflow in the merge, handle it as described unde
 ## Known gotchas
 
 - **No automatic base-image refresh.** An image is built once, on whatever `debian:<suite>-slim` was current at the
-  time. To pick up Debian security updates, re-run the workflow with the same `php_version` (and
-  `update_floating_tags` if the floating tags point at it). A scheduled check is tracked in
-  [#14](https://github.com/specsnl/docker-library-php/issues/14).
+  time. The [base image check](#base-image-check) reports when that has moved on, but rebuilding is up to you.
 - **Docker Hub rate limits.** The builds pull `debian:<suite>-slim` from Docker Hub, anonymously by default, which
   counts against the runner IP's limit. Set the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets to pull
   as an account instead; the build job logs in only when they are set.

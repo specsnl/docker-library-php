@@ -1,0 +1,44 @@
+{
+  "linux/amd64": {
+    "SLSA": {
+      "buildDefinition": {
+        "buildType": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+        "resolvedDependencies": [
+          {
+            "digest": {
+              "sha256": "ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
+            },
+            "uri": "pkg:docker/docker/buildkit-syft-scanner@stable-1?platform=linux%2Famd64"
+          },
+          {
+            "digest": {
+              "sha256": "62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"
+            },
+            "uri": "pkg:docker/debian@trixie-slim?platform=linux%2Famd64"
+          }
+        ]
+      }
+    }
+  },
+  "linux/arm64": {
+    "SLSA": {
+      "buildDefinition": {
+        "buildType": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+        "resolvedDependencies": [
+          {
+            "digest": {
+              "sha256": "ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
+            },
+            "uri": "pkg:docker/docker/buildkit-syft-scanner@stable-1?platform=linux%2Farm64"
+          },
+          {
+            "digest": {
+              "sha256": "62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"
+            },
+            "uri": "pkg:docker/debian@trixie-slim?platform=linux%2Farm64"
+          }
+        ]
+      }
+    }
+  }
+}
