@@ -10,6 +10,7 @@
 # Usage: scripts/select-matrix.sh <version> [variants] [base]
 #   e.g. scripts/select-matrix.sh 8.4.13
 #        scripts/select-matrix.sh 8.4.13 cli,zts bookworm
+#        scripts/select-matrix.sh 8.6.0RC1
 #
 # variants is a comma-separated override of build-config.json's variants, and
 # base the Debian suite to build on, by default the newest one versions.json
@@ -37,16 +38,17 @@ contains() {
 	return 1
 }
 
-# Sets the global branch from a branch (8.4) or a full version (8.4.13).
+# Sets the global branch to the versions.json entry of a branch (8.4) or a
+# full version (8.4.13), which for a pre-release (8.6.0RC1) is <branch>-rc.
 parse_branch() {
 	local version="$1"
 
-	if [[ ! "$version" =~ ^([0-9]+\.[0-9]+)(\.[0-9]+)?$ ]]; then
-		echo >&2 "error: '$version' is not a PHP branch or version like 8.4 or 8.4.13"
+	if [[ ! "$version" =~ ^([0-9]+\.[0-9]+)(\.[0-9]+((alpha|beta|RC)[0-9]+)?)?$ ]]; then
+		echo >&2 "error: '$version' is not a PHP branch or version like 8.4, 8.4.13 or 8.6.0RC1"
 		usage
 	fi
 
-	branch="${BASH_REMATCH[1]}"
+	branch="${BASH_REMATCH[1]}${BASH_REMATCH[3]:+-rc}"
 }
 
 # Prints the family a suite belongs to. Windows belongs to none, so no

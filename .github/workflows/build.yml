@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       php_version:
-        description: Exact PHP version to build, e.g. 8.4.13
+        description: Exact PHP version to build, e.g. 8.4.13 (or 8.6.0RC1 once build-config.json enables prerelease)
         required: true
         type: string
       variants:
@@ -91,11 +91,12 @@ jobs:
           echo "directories=$directories" | tee -a "$GITHUB_OUTPUT"
 
       # A tarball keeps the executable bits on the docker-php-* scripts, which
-      # upload-artifact drops.
+      # upload-artifact drops. Taking the directories from the matrix also
+      # covers a pre-release, which renders under <branch>-rc/.
       - name: Pack the build context
         env:
-          PHP_VERSION: ${{ inputs.php_version }}
-        run: tar -cf "$RUNNER_TEMP/build-context.tar" "${PHP_VERSION%.*}"
+          DIRECTORIES: ${{ steps.directories.outputs.directories }}
+        run: jq -r '.include[].directory' <<< "$DIRECTORIES" | tar -cf "$RUNNER_TEMP/build-context.tar" -T -
 
       - name: Upload the build context
         uses: actions/upload-artifact@v7

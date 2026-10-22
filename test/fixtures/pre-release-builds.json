@@ -1,0 +1,59 @@
+{
+  "8.3.14": {
+    "active": true,
+    "release": {
+      "type": "RC",
+      "number": 0,
+      "sha256_bz2": "",
+      "sha256_gz": "",
+      "sha256_xz": "",
+      "date": "21 Nov 2024",
+      "baseurl": "https://downloads.php.net/",
+      "enabled": false
+    },
+    "dev_version": "8.3.14-dev"
+  },
+  "8.4.0": {
+    "active": true,
+    "release": {
+      "type": "RC",
+      "number": 4,
+      "sha256_bz2": "",
+      "sha256_gz": "",
+      "sha256_xz": "9159690efa14df1011c0bedc49d6fa2089fcc0380c07440d5cb3535229e09853",
+      "date": "07 Nov 2024",
+      "baseurl": "https://downloads.php.net/~saki/",
+      "version": "8.4.0RC4",
+      "files": {
+        "xz": {
+          "sha256": "9159690efa14df1011c0bedc49d6fa2089fcc0380c07440d5cb3535229e09853",
+          "path": "https://downloads.php.net/~saki/php-8.4.0RC4.tar.xz"
+        }
+      }
+    },
+    "dev_version": "8.4.0-dev"
+  },
+  "releases": {
+    "8.4.0": {
+      "type": "RC",
+      "number": 4,
+      "sha256_bz2": "",
+      "sha256_gz": "",
+      "sha256_xz": "9159690efa14df1011c0bedc49d6fa2089fcc0380c07440d5cb3535229e09853",
+      "date": "07 Nov 2024",
+      "baseurl": "https://downloads.php.net/~saki/",
+      "version": "8.4.0RC4",
+      "files": {
+        "xz": {
+          "sha256": "9159690efa14df1011c0bedc49d6fa2089fcc0380c07440d5cb3535229e09853",
+          "path": "https://downloads.php.net/~saki/php-8.4.0RC4.tar.xz"
+        }
+      }
+    }
+  },
+  "reported": [
+    "8.3.14-dev",
+    "8.4.0-dev",
+    "8.4.0RC4"
+  ]
+}

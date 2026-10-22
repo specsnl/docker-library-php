@@ -7,7 +7,7 @@
 # tags follow only when update_floating_tags is true, so rebuilding an old
 # patch release never moves them backwards: <branch>-<variant>-<suite>, the
 # suite-less <major>-<variant> and <variant>, and latest for cli alone, as the
-# official image does.
+# official image does. A pre-release only ever gets the exact tag.
 #
 # The suite-less tags track whichever suite the run built on, so build.yml
 # refuses update_floating_tags together with a base override.
@@ -41,12 +41,11 @@ check_tag_part() {
 }
 
 # Succeeds when a run may move the floating tags. Pre-releases never do,
-# whatever update_floating_tags says; parse_version rejects them for now, so
-# this is where that rule takes effect once it accepts them.
+# whatever update_floating_tags says.
 floating_tags_allowed() {
 	local version="$1" update_floating_tags="$2"
 
-	[ "$update_floating_tags" = true ] && [[ ! "$version" =~ (alpha|beta|RC)[0-9]+$ ]]
+	[ "$update_floating_tags" = true ] && ! is_prerelease "$version"
 }
 
 main() {
@@ -74,6 +73,8 @@ main() {
 		if [ "$variant" = "$LATEST_VARIANT" ]; then
 			echo "$IMAGE:latest"
 		fi
+	elif [ "$update_floating_tags" = true ]; then
+		echo >&2 "note: $version is a pre-release, so the floating tags stay where they are"
 	fi
 }
 
