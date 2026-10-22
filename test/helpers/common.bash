@@ -44,6 +44,8 @@ setup_workdir() {
 	CHECK_BASE_IMAGES="$WORKDIR/scripts/check-base-images.sh"
 	# shellcheck disable=SC2034 # used by the suites that load this file
 	LIST_TAGS="$WORKDIR/scripts/list-tags.sh"
+	# shellcheck disable=SC2034 # used by the suites that load this file
+	VERIFY_TAGS="$WORKDIR/scripts/verify-tags.sh"
 
 	export FIXTURES="$REPO_ROOT/test/fixtures"
 	export CURL_LOG="$BATS_TEST_TMPDIR/curl.log"
