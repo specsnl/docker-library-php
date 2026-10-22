@@ -117,6 +117,49 @@ current_84() {
 	assert_output '-fsSL https://www.php.net/releases/index.php?json&version=8.4.13'
 }
 
+@test "resolve_source takes a pre-release's .xz tarball and checksum from the pre-release builds" {
+	source_pin_version
+
+	resolve_source 8.4.0RC4
+
+	assert_equal "$url" https://downloads.php.net/~saki/php-8.4.0RC4.tar.xz
+	assert_equal "$ascUrl" https://downloads.php.net/~saki/php-8.4.0RC4.tar.xz.asc
+	assert_equal "$sha256" 9159690efa14df1011c0bedc49d6fa2089fcc0380c07440d5cb3535229e09853
+
+	run cat "$CURL_LOG"
+	assert_output '-fsSL https://www.php.net/pre-release-builds.php?format=json'
+}
+
+@test "resolve_source fails clearly for a pre-release php.net no longer lists, and names the ones it does" {
+	source_pin_version
+
+	run resolve_source 8.4.0RC3
+
+	assert_failure 1
+	assert_output 'error: php.net lists no pre-release PHP 8.4.0RC3; it only lists the newest pre-release of each branch (8.4.0RC4)'
+}
+
+@test "resolve_source fails clearly when php.net lists a pre-release without an .xz checksum" {
+	source_pin_version
+	mkdir "$BATS_TEST_TMPDIR/fixtures"
+	jq 'del(.releases["8.4.0"].files.xz.sha256)' "$FIXTURES/pre-release-builds.json" > "$BATS_TEST_TMPDIR/fixtures/pre-release-builds.json"
+	export FIXTURES="$BATS_TEST_TMPDIR/fixtures"
+
+	run resolve_source 8.4.0RC4
+
+	assert_failure 1
+	assert_output 'error: php.net lists no php-8.4.0RC4.tar.xz with a checksum for PHP 8.4.0RC4'
+}
+
+@test "resolve_source fails clearly when the pre-release builds are unreachable" {
+	source_pin_version
+
+	CURL_FAIL=1 run resolve_source 8.4.0RC4
+
+	assert_failure 1
+	assert_output --partial 'error: could not fetch the pre-release builds from https://www.php.net/pre-release-builds.php?format=json'
+}
+
 # End to end
 
 @test "pinning 8.4.13 changes only the 8.4 version, url, ascUrl and sha256" {
@@ -174,6 +217,32 @@ current_84() {
 	assert_output "error: pre-release versions like '8.4.0RC4' are disabled; set \"prerelease\": true in build-config.json to build them"
 	assert_file_empty "$CURL_LOG"
 	cmp "$REPO_ROOT/versions.json" "$WORKDIR/versions.json"
+}
+
+@test "pinning a pre-release with prerelease on changes only its -rc entry and renders that directory" {
+	edit_json build-config.json '.prerelease = true'
+	edit_json versions.json '.["8.4-rc"] = .["8.4"]'
+	cp "$WORKDIR/versions.json" "$BATS_TEST_TMPDIR/versions.json"
+
+	run "$PIN_VERSION" 8.4.0RC4
+	assert_success
+	assert_line '8.4-rc: 8.4.0RC4'
+
+	run jq -c '.["8.4-rc"] | { version, url, ascUrl, sha256 }' "$WORKDIR/versions.json"
+	assert_output '{"version":"8.4.0RC4","url":"https://downloads.php.net/~saki/php-8.4.0RC4.tar.xz","ascUrl":"https://downloads.php.net/~saki/php-8.4.0RC4.tar.xz.asc","sha256":"9159690efa14df1011c0bedc49d6fa2089fcc0380c07440d5cb3535229e09853"}'
+
+	run diff <(jq 'del(.["8.4-rc"])' "$BATS_TEST_TMPDIR/versions.json") <(jq 'del(.["8.4-rc"])' "$WORKDIR/versions.json")
+	assert_success
+
+	local dockerfiles=( "$WORKDIR"/8.4-rc/*/*/Dockerfile )
+	assert_equal "${#dockerfiles[@]}" "$(jq '.["8.4"].variants | length' "$REPO_ROOT/versions.json")"
+	assert_file_not_exists "$WORKDIR/8.4"
+
+	for dockerfile in "${dockerfiles[@]}"; do
+		assert_file_contains "$dockerfile" '^ENV PHP_VERSION 8\.4\.0RC4$'
+		assert_file_contains "$dockerfile" '^ENV PHP_URL="https://downloads\.php\.net/~saki/php-8\.4\.0RC4\.tar\.xz" PHP_ASC_URL="https://downloads\.php\.net/~saki/php-8\.4\.0RC4\.tar\.xz\.asc"$'
+		assert_file_contains "$dockerfile" '^ENV PHP_SHA256="9159690efa14df1011c0bedc49d6fa2089fcc0380c07440d5cb3535229e09853"$'
+	done
 }
 
 @test "pinning a pre-release whose -rc entry is null says to merge upstream first" {

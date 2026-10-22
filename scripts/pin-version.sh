@@ -42,11 +42,19 @@ parse_version() {
 	key="$branch${prerelease:+-rc}"
 }
 
-# Sets the globals url, ascUrl and sha256 for a release.
+# Sets the globals url, ascUrl and sha256 for a release or a pre-release.
 #
-# The checksum comes from php.net's release JSON rather than from hashing the
+# The checksum comes from php.net's JSON rather than from hashing the
 # download, so it is an independent check on the tarball the build fetches.
 resolve_source() {
+	if is_prerelease "$1"; then
+		resolve_prerelease_source "$1"
+	else
+		resolve_release_source "$1"
+	fi
+}
+
+resolve_release_source() {
 	local version="$1"
 	local apiUrl="https://www.php.net/releases/index.php?json&version=$version"
 	local json
@@ -70,6 +78,34 @@ resolve_source() {
 	fi
 
 	url="https://www.php.net/distributions/$filename"
+	ascUrl="$url.asc"
+}
+
+# Pre-releases are published on downloads.php.net and missing from the release
+# JSON. php.net's pre-release builds list has them, but only the newest one of
+# each branch. It gives no .asc URL, so this assumes one next to the tarball,
+# as upstream's versions.sh does.
+resolve_prerelease_source() {
+	local version="$1"
+	local apiUrl='https://www.php.net/pre-release-builds.php?format=json'
+	local json xz
+
+	if ! json="$(curl -fsSL "$apiUrl")"; then
+		die "could not fetch the pre-release builds from $apiUrl"
+	fi
+
+	if ! xz="$(jq -ce --arg version "$version" '[(.releases // {})[] | select(.version == $version) | .files.xz][0]' <<<"$json" 2> /dev/null)"; then
+		local listed
+		listed="$(jq -r '[(.releases // {})[].version] | join(", ")' <<<"$json" 2> /dev/null || true)"
+		die "php.net lists no pre-release PHP $version; it only lists the newest pre-release of each branch (${listed:-none right now})"
+	fi
+
+	url="$(jq -r '.path // empty' <<<"$xz")"
+	sha256="$(jq -r '.sha256 // empty' <<<"$xz")"
+	if [ -z "$url" ] || [ -z "$sha256" ]; then
+		die "php.net lists no php-$version.tar.xz with a checksum for PHP $version"
+	fi
+
 	ascUrl="$url.asc"
 }
 
