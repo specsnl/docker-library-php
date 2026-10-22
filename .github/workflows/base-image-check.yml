@@ -1,0 +1,113 @@
+name: Base image check
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+# Two runs at once could each open the issue.
+concurrency:
+  group: ${{ github.workflow }}
+
+permissions:
+  contents: read
+
+# shell: bash adds pipefail, so a failing gh in a pipe fails the step instead
+# of handing on partial or empty output.
+defaults:
+  run:
+    shell: bash
+
+env:
+  ISSUE_TITLE: Published images are behind their base image
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-24.04
+    # Read-only on the packages: this workflow never pushes or tags an image.
+    permissions:
+      contents: read
+      issues: write
+      packages: read
+    env:
+      # Secrets cannot be read in a step condition; this env var can.
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Read the image name
+        id: image
+        run: |
+          source scripts/compute-tags.sh
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Looking up debian:<suite>-slim counts against Docker Hub's rate limit
+      # for the runner's IP, as in build.yml.
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: List the tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          scripts/list-tags.sh "$IMAGE" > "$RUNNER_TEMP/tags"
+          cat "$RUNNER_TEMP/tags"
+
+      - name: Check the base images
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          scripts/check-base-images.sh "$IMAGE" < "$RUNNER_TEMP/tags" > "$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # One open issue tracks every tag that is behind. Editing its body
+      # notifies nobody, so a change to the list also gets a comment.
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/build.yml
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          number="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number,title \
+            | jq -r --arg title "$ISSUE_TITLE" 'map(select(.title == $title))[0].number // empty')"
+
+          if [ ! -s "$RUNNER_TEMP/report.md" ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --reason completed \
+                --comment "Every published tag is on its current base image again, as of [this check]($RUN_URL)."
+            fi
+            exit 0
+          fi
+
+          {
+            echo "The base image has been updated since these tags were built, e.g. with Debian security fixes."
+            echo
+            cat "$RUNNER_TEMP/report.md"
+            echo
+            echo "To pick up the update, run [Build]($BUILD_URL) again with the same \`php_version\`, and with" \
+              "\`update_floating_tags\` when a floating tag such as \`fpm\` is listed. The scheduled" \
+              "[base image check](${BUILD_URL%/build.yml}/base-image-check.yml) keeps this list up to date and" \
+              "closes the issue once every tag is current."
+          } > "$RUNNER_TEMP/body.md"
+
+          if [ -z "$number" ]; then
+            gh issue create --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/body.md"
+          elif [ "$(gh issue view "$number" --json body --jq .body)" != "$(cat "$RUNNER_TEMP/body.md")" ]; then
+            gh issue edit "$number" --body-file "$RUNNER_TEMP/body.md"
+            gh issue comment "$number" --body "The list of tags changed in [this check]($RUN_URL)."
+          fi
