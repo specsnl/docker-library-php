@@ -31,7 +31,9 @@ The jobs run in this order:
 2. **build** builds each variant on a native runner per platform and pushes it **by digest only**, with provenance and
    SBOM attestations.
 3. **smoke-test** runs [`scripts/smoke-test.sh`](../scripts/smoke-test.sh) against each pushed digest: `php -v`,
-   `php -m`, plus `php-fpm -t` for `fpm` and `apache2ctl -t` for `apache`.
+   `php -m`, plus `php-fpm -t` for `fpm` and `apache2ctl -t` for `apache`. It also fails an image whose
+   `PHP_VERSION` differs from `php_version`, or whose `php -m` lacks any of `build-config.json`'s
+   `required_extensions`.
 4. **merge** combines the platforms of each variant into one manifest list and applies the tags
    ([`scripts/compute-tags.sh`](../scripts/compute-tags.sh)).
 
@@ -100,7 +102,8 @@ Upstream's workflows are left unedited. Each one either runs as-is or is switche
   "families": { "debian": true, "alpine": false },
   "variants": ["cli", "fpm", "apache"],
   "platforms": ["linux/amd64", "linux/arm64"],
-  "prerelease": false
+  "prerelease": false,
+  "required_extensions": ["Core", "ctype", "curl", "...", "Zend OPcache", "zlib"]
 }
 ```
 
@@ -110,6 +113,10 @@ Upstream's workflows are left unedited. Each one either runs as-is or is switche
   `linux/amd64` and `linux/arm64` are supported.
 - **`prerelease`**: whether `php_version` may be a pre-release (`RC`, `alpha` or `beta`). With `false`, the prepare
   job rejects one before it fetches anything.
+- **`required_extensions`**: the extensions every image must have; the smoke test fails an image whose `php -m` lacks
+  any of them. Names are compared case-insensitively, and extensions beyond the list are fine. It holds what the stock
+  image lists on every branch from 8.2 on, so an extension only some branches have does not belong here: neither 8.5's
+  new `lexbor` and `uri`, nor `mbstring`, which upstream stopped building in from 8.6 on (it came with PEAR/PECL).
 
 **Building a pre-release:** set `"prerelease": true`, then run the workflow with e.g. `php_version: 8.6.0RC1`. Note
 that:
