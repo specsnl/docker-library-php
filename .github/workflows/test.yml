@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/**'
       - 'test/**'
+      - 'build-config.json'
       - 'compose.yml'
       - 'Taskfile.dist.yml'
       - '.hadolint.yml'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'scripts/**'
       - 'test/**'
+      - 'build-config.json'
       - 'compose.yml'
       - 'Taskfile.dist.yml'
       - '.hadolint.yml'
