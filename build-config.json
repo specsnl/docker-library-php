@@ -2,5 +2,11 @@
   "families": { "debian": true, "alpine": false },
   "variants": ["cli", "fpm", "apache"],
   "platforms": ["linux/amd64", "linux/arm64"],
-  "prerelease": false
+  "prerelease": false,
+  "required_extensions": [
+    "Core", "ctype", "curl", "date", "dom", "fileinfo", "filter", "hash", "iconv", "json", "libxml",
+    "mysqlnd", "openssl", "pcre", "PDO", "pdo_sqlite", "Phar", "posix", "random", "readline",
+    "Reflection", "session", "SimpleXML", "sodium", "SPL", "sqlite3", "standard", "tokenizer", "xml",
+    "xmlreader", "xmlwriter", "Zend OPcache", "zlib"
+  ]
 }

@@ -17,12 +17,22 @@ setup() {
 	setup_workdir
 
 	export DOCKER_PHP_VERSION="$VERSION"
+	export DOCKER_PHP_MODULES="$FIXTURES/php-modules.txt"
 }
 
 # Loads the script's functions without running main.
 source_smoke_test() {
 	# shellcheck source=scripts/smoke-test.sh
 	source "$SMOKE_TEST"
+}
+
+# Points the fake docker at a copy of the php -m fixture without the given
+# extensions.
+modules_without() {
+	local pattern
+	printf -v pattern '%s|' "$@"
+	grep -vxE "${pattern%|}" "$FIXTURES/php-modules.txt" > "$BATS_TEST_TMPDIR/php-modules.txt"
+	export DOCKER_PHP_MODULES="$BATS_TEST_TMPDIR/php-modules.txt"
 }
 
 # Asserts the docker calls, one per line, against stdin.
@@ -161,6 +171,90 @@ assert_docker_calls() {
 
 	assert_success
 	assert_line "smoke test passed: cli in $IMAGE"
+}
+
+# Required extensions
+
+@test "the fixture lists every extension build-config.json requires" {
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_success
+	refute_line --partial 'missing required extensions'
+}
+
+@test "an image missing required extensions fails and names each of them" {
+	modules_without sodium curl
+
+	run "$SMOKE_TEST" "$IMAGE" fpm "$VERSION"
+
+	assert_failure 1
+	assert_line "error: $IMAGE is missing required extensions: curl, sodium"
+	assert_line "error: 1 of 4 smoke checks failed for fpm in $IMAGE"
+	refute_line --partial 'smoke test passed'
+}
+
+@test "a missing extension does not stop the checks after it" {
+	modules_without 'Zend OPcache'
+
+	run "$SMOKE_TEST" "$IMAGE" apache "$VERSION"
+
+	assert_failure 1
+	assert_line "error: $IMAGE is missing required extensions: Zend OPcache"
+	assert_docker_calls <<-EOF
+		run --rm $IMAGE sh -c php -v
+		run --rm $IMAGE sh -c php -r 'echo PHP_VERSION;'
+		run --rm $IMAGE sh -c php -m
+		run --rm $IMAGE sh -c apache2ctl -t
+	EOF
+}
+
+@test "the required extensions come from build-config.json" {
+	edit_json build-config.json '.required_extensions = ["redis", "intl", "curl"]'
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_failure 1
+	assert_line "error: $IMAGE is missing required extensions: redis, intl"
+}
+
+@test "extension names are compared case-insensitively" {
+	edit_json build-config.json '.required_extensions = ["pdo", "PHAR", "zend opcache"]'
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_success
+}
+
+@test "an extension name must match a whole line of php -m" {
+	edit_json build-config.json '.required_extensions = ["pdo_", "Zend", "PHP Modules"]'
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_failure 1
+	assert_line "error: $IMAGE is missing required extensions: pdo_, Zend, PHP Modules"
+}
+
+@test "an empty required_extensions only needs php -m to succeed" {
+	edit_json build-config.json '.required_extensions = []'
+	export DOCKER_PHP_MODULES=/dev/null
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_success
+}
+
+@test "a required_extensions that is missing or not a list of names fails before docker runs" {
+	for filter in 'del(.required_extensions)' '.required_extensions = null' '.required_extensions = "curl"' \
+		'.required_extensions = [1]' '.required_extensions = {"curl": true}'; do
+		edit_json build-config.json "$filter"
+
+		run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+		assert_failure 1
+		assert_output "error: build-config.json's required_extensions is not a list of extension names"
+	done
+
+	assert_file_empty "$DOCKER_LOG"
 }
 
 # Failures
