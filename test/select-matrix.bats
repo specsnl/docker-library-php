@@ -210,6 +210,29 @@ matrix_pairs() {
 	assert_output 'error: PHP 8.5 is not in versions.json; merge upstream docker-library/php first'
 }
 
+@test "a pre-release selects the directories of its branch's -rc entry" {
+	edit_json versions.json '.["8.4-rc"] = .["8.4"]'
+	local variant
+	for variant in $(jq -r '.["8.4-rc"].variants[]' "$WORKDIR/versions.json"); do
+		mkdir -p "$WORKDIR/8.4-rc/$variant"
+	done
+
+	local version
+	for version in 8.4.0RC4 8.4.0beta2 8.4.0alpha1; do
+		select_matrix "$version"
+
+		run matrix '[.include[].directory] | unique'
+		assert_output '["8.4-rc/trixie/apache","8.4-rc/trixie/cli","8.4-rc/trixie/fpm"]'
+	done
+}
+
+@test "a pre-release whose -rc entry is null fails like a missing branch" {
+	run "$SELECT_MATRIX" 8.4.0RC4
+
+	assert_failure 1
+	assert_output 'error: PHP 8.4-rc is not in versions.json; merge upstream docker-library/php first'
+}
+
 @test "a directory that was not rendered fails and points at pin-version.sh" {
 	rm -r "$WORKDIR/8.4/trixie/fpm"
 
@@ -234,8 +257,8 @@ matrix_pairs() {
 	assert_success
 }
 
-@test "select-matrix.sh rejects anything but a branch or a stable version with usage" {
-	for version in 8 8.6.0RC3 v8.4 8.4.13.1 ''; do
+@test "select-matrix.sh rejects anything but a branch or a version with usage" {
+	for version in 8 8.6-rc 8.6.0rc3 8.6RC3 v8.4 8.4.13.1 ''; do
 		run "$SELECT_MATRIX" "$version"
 		assert_failure 2
 		assert_output --partial 'usage: select-matrix.sh <version> [variants] [base]'
