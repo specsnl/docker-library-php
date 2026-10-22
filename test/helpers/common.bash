@@ -11,7 +11,7 @@ load_libraries() {
 	bats_load_library bats-file
 }
 
-# Copies the repo into WORKDIR and puts the fake curl first on PATH.
+# Copies the repo into WORKDIR and puts the fake curl and docker first on PATH.
 #
 # cp -p keeps the mtimes: apply-templates.sh downloads .jq-template.awk again
 # whenever it is newer than that file, and there is no network to do it with.
@@ -37,9 +37,13 @@ setup_workdir() {
 	PIN_VERSION="$WORKDIR/scripts/pin-version.sh"
 	# shellcheck disable=SC2034 # used by the suites that load this file
 	SELECT_MATRIX="$WORKDIR/scripts/select-matrix.sh"
+	# shellcheck disable=SC2034 # used by the suites that load this file
+	SMOKE_TEST="$WORKDIR/scripts/smoke-test.sh"
 
 	export FIXTURES="$REPO_ROOT/test/fixtures"
 	export CURL_LOG="$BATS_TEST_TMPDIR/curl.log"
 	: > "$CURL_LOG"
+	export DOCKER_LOG="$BATS_TEST_TMPDIR/docker.log"
+	: > "$DOCKER_LOG"
 	PATH="$REPO_ROOT/test/helpers/bin:$PATH"
 }

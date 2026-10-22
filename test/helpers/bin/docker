@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#
+# Stands in for docker on PATH, since the bats container has neither images
+# nor a Docker socket. Logs every call to DOCKER_LOG, one call per line with
+# the arguments joined by spaces, and succeeds without output.
+#
+# Set DOCKER_FAIL to make every call whose logged line contains that string
+# fail the way a failing command in the container does.
+set -Eeuo pipefail
+
+printf '%s\n' "$*" >> "${DOCKER_LOG:?}"
+
+if [ -n "${DOCKER_FAIL:-}" ] && [[ "$*" == *"$DOCKER_FAIL"* ]]; then
+	echo >&2 "fake docker: failing as DOCKER_FAIL='$DOCKER_FAIL' asks"
+	exit 1
+fi
