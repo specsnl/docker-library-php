@@ -1,0 +1,295 @@
+name: Build
+
+run-name: Build PHP ${{ inputs.php_version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      php_version:
+        description: Exact PHP version to build, e.g. 8.4.13
+        required: true
+        type: string
+      variants:
+        description: Comma-separated variants, e.g. cli,zts (empty takes build-config.json's)
+        required: false
+        type: string
+        default: ''
+      base:
+        description: Debian suite to build on, e.g. bookworm (empty takes the newest in versions.json)
+        required: false
+        type: string
+        default: ''
+      update_floating_tags:
+        description: Also move the floating tags (8.4-fpm-trixie, 8-fpm, fpm, latest)
+        required: false
+        type: boolean
+        default: false
+      upstream_ref:
+        description: docker-library/php ref to take the templates and versions.json from (empty uses this branch)
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      directories: ${{ steps.directories.outputs.directories }}
+    steps:
+      # 8-fpm, fpm and latest carry no suite, so a run on any other suite than
+      # the default would move them off it.
+      - name: Refuse floating tags for a base override
+        if: inputs.update_floating_tags && inputs.base != ''
+        run: |
+          echo "::error::update_floating_tags also moves the suite-less tags, which follow the default suite; leave base empty to update them"
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Read the image name
+        id: image
+        run: |
+          source scripts/compute-tags.sh
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      # The fork only adds files, so laying upstream's tree over the checkout
+      # gives the same templates and versions.json that merging the ref would.
+      - name: Check out upstream's files at ${{ inputs.upstream_ref }}
+        if: inputs.upstream_ref != ''
+        env:
+          UPSTREAM_REF: ${{ inputs.upstream_ref }}
+        run: |
+          git fetch --depth=1 https://github.com/docker-library/php.git "$UPSTREAM_REF"
+          git checkout FETCH_HEAD -- .
+
+      - name: Pin PHP ${{ inputs.php_version }} and render its Dockerfiles
+        env:
+          PHP_VERSION: ${{ inputs.php_version }}
+        run: scripts/pin-version.sh "$PHP_VERSION"
+
+      - name: Select the build matrix
+        id: matrix
+        env:
+          PHP_VERSION: ${{ inputs.php_version }}
+          VARIANTS: ${{ inputs.variants }}
+          BASE: ${{ inputs.base }}
+        run: scripts/select-matrix.sh "$PHP_VERSION" "$VARIANTS" "$BASE" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Select the directories to merge
+        id: directories
+        env:
+          MATRIX: ${{ steps.matrix.outputs.matrix }}
+        run: |
+          directories="$(jq -c '{ include: [.include[] | { directory, variant, suite }] | unique }' <<< "$MATRIX")"
+          echo "directories=$directories" | tee -a "$GITHUB_OUTPUT"
+
+      # A tarball keeps the executable bits on the docker-php-* scripts, which
+      # upload-artifact drops.
+      - name: Pack the build context
+        env:
+          PHP_VERSION: ${{ inputs.php_version }}
+        run: tar -cf "$RUNNER_TEMP/build-context.tar" "${PHP_VERSION%.*}"
+
+      - name: Upload the build context
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-context
+          path: ${{ runner.temp }}/build-context.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build ${{ matrix.directory }} (${{ matrix.platform }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
+      # Secrets cannot be read in a step condition; this env var can.
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - name: Download the build context
+        uses: actions/download-artifact@v8
+        with:
+          name: build-context
+          path: ${{ runner.temp }}
+
+      - name: Unpack the build context
+        run: tar -xf "$RUNNER_TEMP/build-context.tar"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pulling debian:<suite>-slim anonymously counts against Docker Hub's
+      # rate limit for the runner's IP. With the DOCKERHUB_USERNAME and
+      # DOCKERHUB_TOKEN secrets set, it pulls as that account instead.
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # No tags yet: the merge job applies them once every digest has passed
+      # the smoke test, so a half-failed run never leaves a broken tag behind.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.directory }}
+          platforms: ${{ matrix.platform }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.php_version }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Name the digest artifact
+        id: artifact
+        env:
+          DIRECTORY: ${{ matrix.directory }}
+          PLATFORM: ${{ matrix.platform }}
+        run: echo "name=digests-${DIRECTORY//\//-}-${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  smoke-test:
+    name: Smoke test ${{ matrix.directory }} (${{ matrix.platform }})
+    needs: [prepare, build]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
+      # The digest is an index that also holds the attestations; this picks
+      # the platform's image out of it rather than relying on the runner's.
+      DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Name the digest artifact
+        id: artifact
+        env:
+          DIRECTORY: ${{ matrix.directory }}
+          PLATFORM: ${{ matrix.platform }}
+        run: echo "name=digests-${DIRECTORY//\//-}-${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Download the digest
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ runner.temp }}/digests
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke test
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          digests=( "$RUNNER_TEMP"/digests/* )
+          scripts/smoke-test.sh "$IMAGE@sha256:${digests[0]##*/}" "$VARIANT"
+
+  merge:
+    name: Merge ${{ matrix.directory }}
+    needs: [prepare, smoke-test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix: ${{ fromJSON(needs.prepare.outputs.directories) }}
+    env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Name the digest artifacts
+        id: artifact
+        env:
+          DIRECTORY: ${{ matrix.directory }}
+        run: echo "pattern=digests-${DIRECTORY//\//-}-*" >> "$GITHUB_OUTPUT"
+
+      - name: Download the digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ steps.artifact.outputs.pattern }}
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute the tags
+        env:
+          PHP_VERSION: ${{ inputs.php_version }}
+          VARIANT: ${{ matrix.variant }}
+          SUITE: ${{ matrix.suite }}
+          UPDATE_FLOATING_TAGS: ${{ inputs.update_floating_tags }}
+        run: scripts/compute-tags.sh "$PHP_VERSION" "$VARIANT" "$SUITE" "$UPDATE_FLOATING_TAGS" | tee "$RUNNER_TEMP/tags"
+
+      # The annotation links the multi-arch package to this repository on
+      # GHCR, as the label does for the single-platform images.
+      - name: Create the manifest list and apply the tags
+        env:
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          args=( --annotation "index:org.opencontainers.image.source=$SOURCE" )
+          while read -r tag; do
+            args+=( --tag "$tag" )
+          done < "$RUNNER_TEMP/tags"
+          for digest in "$RUNNER_TEMP"/digests/*; do
+            args+=( "$IMAGE@sha256:${digest##*/}" )
+          done
+          docker buildx imagetools create "${args[@]}"
+
+      - name: Inspect the image
+        run: docker buildx imagetools inspect "$(head -n 1 "$RUNNER_TEMP/tags")"
