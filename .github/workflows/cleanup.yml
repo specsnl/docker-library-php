@@ -1,0 +1,90 @@
+name: Cleanup
+
+on:
+  schedule:
+    # Mondays at 04:17 UTC, off the hour when scheduled runs pile up.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only log what would be deleted
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Two runs deleting from the same package would trip over each other.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete untagged versions
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      package: ${{ steps.image.outputs.package }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Read the image name
+        id: image
+        run: |
+          source scripts/compute-tags.sh
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "package=${IMAGE##*/}" >> "$GITHUB_OUTPUT"
+
+      # The action keeps every platform image and attestation a tagged
+      # manifest list still references, so this only deletes what no tag
+      # reaches: the per-platform lists the build jobs push, failed runs, and
+      # the old lists a rebuild moved the tags off. older-than leaves a build
+      # that is still running alone. On a schedule, inputs.dry_run is empty.
+      - name: Delete untagged versions older than 7 days
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        with:
+          package: ${{ steps.image.outputs.package }}
+          delete-untagged: true
+          older-than: 7 days
+          validate: true
+          dry-run: ${{ inputs.dry_run == true }}
+
+  # The action's validate only logs what it finds; this fails the run instead.
+  verify:
+    name: Verify the tags
+    needs: cleanup
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE: ${{ needs.cleanup.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List the tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          scripts/list-tags.sh "$IMAGE" > "$RUNNER_TEMP/tags"
+          cat "$RUNNER_TEMP/tags"
+
+      - name: Verify every tag
+        run: scripts/verify-tags.sh "$IMAGE" < "$RUNNER_TEMP/tags"
