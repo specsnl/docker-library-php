@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# Stands in for gh on PATH. Logs every call to GH_LOG, and answers gh api
+# from the JSON file in GH_API named after the endpoint, with every / turned
+# into _, filtered through its --jq the way gh does. An endpoint without a
+# file fails as a 404 does.
+#
+# Set GH_FAIL to make every call fail the way an API error does.
+set -Eeuo pipefail
+
+printf '%s\n' "$*" >> "${GH_LOG:?}"
+
+if [ -n "${GH_FAIL:-}" ]; then
+	echo >&2 'gh: Server Error (HTTP 502)'
+	exit 1
+fi
+
+[ "${1:-}" = api ] || exit 0
+shift
+
+filter=.
+endpoint=
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--jq) filter="$2"; shift ;;
+		-*) ;;
+		*) endpoint="$1" ;;
+	esac
+	shift
+done
+
+response="${GH_API:?}/${endpoint//\//_}"
+if [ ! -f "$response" ]; then
+	echo >&2 "gh: Not Found (HTTP 404) (fake gh has no $response)"
+	exit 1
+fi
+jq -r "$filter" "$response"

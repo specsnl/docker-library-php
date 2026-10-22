@@ -11,7 +11,8 @@ load_libraries() {
 	bats_load_library bats-file
 }
 
-# Copies the repo into WORKDIR and puts the fake curl and docker first on PATH.
+# Copies the repo into WORKDIR and puts the fake curl, docker and gh first on
+# PATH.
 #
 # cp -p keeps the mtimes: apply-templates.sh downloads .jq-template.awk again
 # whenever it is newer than that file, and there is no network to do it with.
@@ -41,6 +42,8 @@ setup_workdir() {
 	SMOKE_TEST="$WORKDIR/scripts/smoke-test.sh"
 	# shellcheck disable=SC2034 # used by the suites that load this file
 	CHECK_BASE_IMAGES="$WORKDIR/scripts/check-base-images.sh"
+	# shellcheck disable=SC2034 # used by the suites that load this file
+	LIST_TAGS="$WORKDIR/scripts/list-tags.sh"
 
 	export FIXTURES="$REPO_ROOT/test/fixtures"
 	export CURL_LOG="$BATS_TEST_TMPDIR/curl.log"
@@ -49,6 +52,10 @@ setup_workdir() {
 	: > "$DOCKER_LOG"
 	export DOCKER_INSPECT="$BATS_TEST_TMPDIR/inspect"
 	mkdir -p "$DOCKER_INSPECT"
+	export GH_LOG="$BATS_TEST_TMPDIR/gh.log"
+	: > "$GH_LOG"
+	export GH_API="$BATS_TEST_TMPDIR/gh-api"
+	mkdir -p "$GH_API"
 	PATH="$REPO_ROOT/test/helpers/bin:$PATH"
 }
 
