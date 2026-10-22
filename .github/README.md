@@ -80,6 +80,29 @@ To pick up the update, run the [Build workflow](#running-a-build) again with the
 nothing still uses them. Pre-release tags are skipped: php.net only serves the newest pre-release of a branch, so an
 older one can't be rebuilt. A tag that cannot be fetched or has no provenance fails the run instead of reporting.
 
+## Cleaning up untagged versions
+
+Every build leaves untagged package versions in `ghcr.io/specsnl/php`: the per-platform manifest lists the build jobs
+push by digest, everything a failed run pushed, and the old manifest list whenever a rebuild moves a tag. The
+**Cleanup** workflow ([`cleanup.yml`](workflows/cleanup.yml)) deletes them every Monday at 04:17 UTC.
+
+1. **cleanup** runs [`dataaxiom/ghcr-cleanup-action`](https://github.com/dataaxiom/ghcr-cleanup-action) to delete
+   untagged versions older than **7 days**. Most of what is untagged must stay: the platform images and attestations a
+   tagged manifest list points at are untagged versions too. The action reads every manifest list and keeps any version
+   one of them still references, so only what no tag reaches is deleted. The 7 days keep it clear of a build that is
+   still running, whose digests get their tags only in the merge job.
+2. **verify** lists every tag with [`scripts/list-tags.sh`](../scripts/list-tags.sh) and runs
+   [`scripts/verify-tags.sh`](../scripts/verify-tags.sh) on them. Each tag must be a manifest list with an image for
+   every platform in `build-config.json`, and each manifest it references must still be in the registry. The action's
+   own `validate` option only logs what it finds; this job fails the run instead.
+
+Run it by hand from Actions → Cleanup → Run workflow. A manual run is a **dry run** by default: it logs what it would
+delete and still runs **verify**. Untick `dry_run` to delete for real.
+
+The workflow deletes with the `GITHUB_TOKEN`, which only works while this repository has the **Admin** role on the
+package (package settings → Manage Actions access). A package first pushed by a workflow here normally grants it
+already; if the cleanup step fails with a 403, check that setting.
+
 ## The fork rule: only add files
 
 Upstream commits the rendered `<branch>/<suite>/<variant>/Dockerfile` files, `versions.json`, the templates and its own
@@ -87,7 +110,8 @@ workflows. Any edit to one of those conflicts on the next upstream merge. So the
 modifies a file upstream commits:
 
 - `.github/README.md`, `.github/dependabot.yml`
-- `.github/workflows/build.yml`, `.github/workflows/base-image-check.yml`, `.github/workflows/test.yml`
+- `.github/workflows/build.yml`, `.github/workflows/base-image-check.yml`, `.github/workflows/cleanup.yml`,
+  `.github/workflows/test.yml`
 - `build-config.json`, `compose.yml`, `Taskfile.dist.yml`, `.hadolint.yml`
 - `scripts/`, `test/`
 
@@ -168,9 +192,9 @@ Extra arguments go to bats, e.g. `task test -- --filter resolve_source`. The **T
 ([`test.yml`](workflows/test.yml)) runs `task checkall` on pull requests and pushes to `master` that touch
 `scripts/`, `test/` or the tooling around them.
 
-The workflow logic (pinning, matrix, tags, smoke checks) lives in `scripts/` so it can be tested this way. **Any change
-to `scripts/` comes with a matching case in `test/*.bats`.** The suite fakes `curl` and `docker`
-([`test/helpers/bin/`](../test/helpers/bin)) and reads php.net responses from
+The workflow logic (pinning, matrix, tags, smoke checks, base image and tag checks) lives in `scripts/` so it can be
+tested this way. **Any change to `scripts/` comes with a matching case in `test/*.bats`.** The suite fakes `curl`,
+`docker` and `gh` ([`test/helpers/bin/`](../test/helpers/bin)) and reads php.net responses from
 [`test/fixtures/`](../test/fixtures), so a test that reaches for the network fails instead of passing by luck.
 
 ## Syncing with upstream
@@ -209,8 +233,9 @@ If upstream adds or renames a workflow in the merge, handle it as described unde
 - **GPG keyserver flakiness.** Upstream's Dockerfiles fetch the release managers' keys from `keyserver.ubuntu.com`,
   which fails now and then. Re-run the failed jobs. The template stays untouched (see
   [the fork rule](#the-fork-rule-only-add-files)).
-- **Untagged versions pile up in GHCR.** Every push by digest, and every rebuild that moves a tag, leaves untagged
-  package versions behind. Cleaning them up is tracked in [#12](https://github.com/specsnl/docker-library-php/issues/12).
+- **Untagged versions linger for up to two weeks.** The cleanup only deletes untagged versions older than 7 days, once
+  a week, so the package's version list in the GitHub UI always holds the last week or two of them. That is expected;
+  see [Cleaning up untagged versions](#cleaning-up-untagged-versions).
 - **Checking a second platform locally.** With Docker's containerd image store, `docker run --platform` on one
   platform after the other fails with `content digest ... not found`, because the first run only pulled its own
   layers. Pull each platform explicitly first: `docker pull --platform linux/arm64 <image>`.
