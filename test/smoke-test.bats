@@ -7,6 +7,7 @@
 # end-to-end build runs the checks against real images.
 
 IMAGE='ghcr.io/specsnl/php@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+VERSION='8.4.13'
 
 setup() {
 	bats_require_minimum_version 1.5.0
@@ -14,12 +15,24 @@ setup() {
 	load helpers/common
 	load_libraries
 	setup_workdir
+
+	export DOCKER_PHP_VERSION="$VERSION"
+	export DOCKER_PHP_MODULES="$FIXTURES/php-modules.txt"
 }
 
 # Loads the script's functions without running main.
 source_smoke_test() {
 	# shellcheck source=scripts/smoke-test.sh
 	source "$SMOKE_TEST"
+}
+
+# Points the fake docker at a copy of the php -m fixture without the given
+# extensions.
+modules_without() {
+	local pattern
+	printf -v pattern '%s|' "$@"
+	grep -vxE "${pattern%|}" "$FIXTURES/php-modules.txt" > "$BATS_TEST_TMPDIR/php-modules.txt"
+	export DOCKER_PHP_MODULES="$BATS_TEST_TMPDIR/php-modules.txt"
 }
 
 # Asserts the docker calls, one per line, against stdin.
@@ -30,33 +43,36 @@ assert_docker_calls() {
 
 # Checks per variant
 
-@test "cli runs php -v and php -m against the digest, and nothing else" {
-	run "$SMOKE_TEST" "$IMAGE" cli
+@test "cli runs php -v, the version check and php -m against the digest, and nothing else" {
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
 
 	assert_success
 	assert_docker_calls <<-EOF
 		run --rm $IMAGE sh -c php -v
+		run --rm $IMAGE sh -c php -r 'echo PHP_VERSION;'
 		run --rm $IMAGE sh -c php -m
 	EOF
 }
 
 @test "fpm also runs php-fpm -t" {
-	run "$SMOKE_TEST" "$IMAGE" fpm
+	run "$SMOKE_TEST" "$IMAGE" fpm "$VERSION"
 
 	assert_success
 	assert_docker_calls <<-EOF
 		run --rm $IMAGE sh -c php -v
+		run --rm $IMAGE sh -c php -r 'echo PHP_VERSION;'
 		run --rm $IMAGE sh -c php -m
 		run --rm $IMAGE sh -c php-fpm -t
 	EOF
 }
 
 @test "apache also runs apache2ctl -t" {
-	run "$SMOKE_TEST" "$IMAGE" apache
+	run "$SMOKE_TEST" "$IMAGE" apache "$VERSION"
 
 	assert_success
 	assert_docker_calls <<-EOF
 		run --rm $IMAGE sh -c php -v
+		run --rm $IMAGE sh -c php -r 'echo PHP_VERSION;'
 		run --rm $IMAGE sh -c php -m
 		run --rm $IMAGE sh -c apache2ctl -t
 	EOF
@@ -66,11 +82,12 @@ assert_docker_calls() {
 	for variant in zts something-new; do
 		: > "$DOCKER_LOG"
 
-		run "$SMOKE_TEST" "$IMAGE" "$variant"
+		run "$SMOKE_TEST" "$IMAGE" "$variant" "$VERSION"
 
 		assert_success
 		assert_docker_calls <<-EOF
 			run --rm $IMAGE sh -c php -v
+			run --rm $IMAGE sh -c php -r 'echo PHP_VERSION;'
 			run --rm $IMAGE sh -c php -m
 		EOF
 	done
@@ -83,6 +100,7 @@ assert_docker_calls() {
 
 	assert_output - <<-'EOF'
 		php -v
+		php -r 'echo PHP_VERSION;'
 		php -m
 		php-fpm -t
 	EOF
@@ -90,7 +108,7 @@ assert_docker_calls() {
 
 @test "every check runs under sh -c, never bash" {
 	for variant in cli fpm apache; do
-		run "$SMOKE_TEST" "$IMAGE" "$variant"
+		run "$SMOKE_TEST" "$IMAGE" "$variant" "$VERSION"
 		assert_success
 	done
 
@@ -101,53 +119,198 @@ assert_docker_calls() {
 }
 
 @test "a passing run says which variant and image it checked" {
-	run "$SMOKE_TEST" "$IMAGE" fpm
+	run "$SMOKE_TEST" "$IMAGE" fpm "$VERSION"
 
 	assert_success
 	assert_line --index 0 -- '--- php -v'
 	assert_line "smoke test passed: fpm in $IMAGE"
 }
 
-# Failures
+@test "a check's output is printed under its heading" {
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
 
-@test "a failing check fails the run and names the check and the image" {
-	DOCKER_FAIL='php-fpm -t' run "$SMOKE_TEST" "$IMAGE" fpm
+	assert_success
+	assert_line --index 1 -- "--- php -r 'echo PHP_VERSION;'"
+	assert_line --index 2 "$VERSION"
+}
+
+# PHP version
+
+@test "an image running another PHP version fails and shows both versions" {
+	DOCKER_PHP_VERSION='8.4.14' run "$SMOKE_TEST" "$IMAGE" fpm "$VERSION"
 
 	assert_failure 1
-	assert_line "error: 'php-fpm -t' failed in $IMAGE"
-	assert_line "error: 1 of 3 smoke checks failed for fpm in $IMAGE"
+	assert_line "error: $IMAGE runs PHP 8.4.14, expected $VERSION"
+	assert_line "error: 1 of 4 smoke checks failed for fpm in $IMAGE"
 	refute_line --partial 'smoke test passed'
 }
 
-@test "a failing check does not stop the checks after it" {
-	DOCKER_FAIL='php -v' run "$SMOKE_TEST" "$IMAGE" apache
+@test "a version mismatch does not stop the checks after it" {
+	DOCKER_PHP_VERSION='8.4.14' run "$SMOKE_TEST" "$IMAGE" apache "$VERSION"
 
 	assert_failure 1
 	assert_docker_calls <<-EOF
 		run --rm $IMAGE sh -c php -v
+		run --rm $IMAGE sh -c php -r 'echo PHP_VERSION;'
+		run --rm $IMAGE sh -c php -m
+		run --rm $IMAGE sh -c apache2ctl -t
+	EOF
+}
+
+@test "the version is compared exactly, not as a prefix" {
+	for actual in 8.4.1 8.4.130 8.4.13RC1 '8.4.13 '; do
+		DOCKER_PHP_VERSION="$actual" run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+		assert_failure 1
+		assert_line "error: $IMAGE runs PHP $actual, expected $VERSION"
+	done
+}
+
+@test "a pre-release version passes when the image runs exactly that one" {
+	DOCKER_PHP_VERSION='8.5.0RC2' run "$SMOKE_TEST" "$IMAGE" cli 8.5.0RC2
+
+	assert_success
+	assert_line "smoke test passed: cli in $IMAGE"
+}
+
+# Required extensions
+
+@test "the fixture lists every extension build-config.json requires" {
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_success
+	refute_line --partial 'missing required extensions'
+}
+
+@test "an image missing required extensions fails and names each of them" {
+	modules_without sodium curl
+
+	run "$SMOKE_TEST" "$IMAGE" fpm "$VERSION"
+
+	assert_failure 1
+	assert_line "error: $IMAGE is missing required extensions: curl, sodium"
+	assert_line "error: 1 of 4 smoke checks failed for fpm in $IMAGE"
+	refute_line --partial 'smoke test passed'
+}
+
+@test "a missing extension does not stop the checks after it" {
+	modules_without 'Zend OPcache'
+
+	run "$SMOKE_TEST" "$IMAGE" apache "$VERSION"
+
+	assert_failure 1
+	assert_line "error: $IMAGE is missing required extensions: Zend OPcache"
+	assert_docker_calls <<-EOF
+		run --rm $IMAGE sh -c php -v
+		run --rm $IMAGE sh -c php -r 'echo PHP_VERSION;'
+		run --rm $IMAGE sh -c php -m
+		run --rm $IMAGE sh -c apache2ctl -t
+	EOF
+}
+
+@test "the required extensions come from build-config.json" {
+	edit_json build-config.json '.required_extensions = ["redis", "intl", "curl"]'
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_failure 1
+	assert_line "error: $IMAGE is missing required extensions: redis, intl"
+}
+
+@test "extension names are compared case-insensitively" {
+	edit_json build-config.json '.required_extensions = ["pdo", "PHAR", "zend opcache"]'
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_success
+}
+
+@test "an extension name must match a whole line of php -m" {
+	edit_json build-config.json '.required_extensions = ["pdo_", "Zend", "PHP Modules"]'
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_failure 1
+	assert_line "error: $IMAGE is missing required extensions: pdo_, Zend, PHP Modules"
+}
+
+@test "an empty required_extensions only needs php -m to succeed" {
+	edit_json build-config.json '.required_extensions = []'
+	export DOCKER_PHP_MODULES=/dev/null
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+	assert_success
+}
+
+@test "a required_extensions that is missing or not a list of names fails before docker runs" {
+	for filter in 'del(.required_extensions)' '.required_extensions = null' '.required_extensions = "curl"' \
+		'.required_extensions = [1]' '.required_extensions = {"curl": true}'; do
+		edit_json build-config.json "$filter"
+
+		run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
+
+		assert_failure 1
+		assert_output "error: build-config.json's required_extensions is not a list of extension names"
+	done
+
+	assert_file_empty "$DOCKER_LOG"
+}
+
+# Failures
+
+@test "a failing check fails the run and names the check and the image" {
+	DOCKER_FAIL='php-fpm -t' run "$SMOKE_TEST" "$IMAGE" fpm "$VERSION"
+
+	assert_failure 1
+	assert_line "error: 'php-fpm -t' failed in $IMAGE"
+	assert_line "error: 1 of 4 smoke checks failed for fpm in $IMAGE"
+	refute_line --partial 'smoke test passed'
+}
+
+@test "a failing check does not stop the checks after it" {
+	DOCKER_FAIL='php -v' run "$SMOKE_TEST" "$IMAGE" apache "$VERSION"
+
+	assert_failure 1
+	assert_docker_calls <<-EOF
+		run --rm $IMAGE sh -c php -v
+		run --rm $IMAGE sh -c php -r 'echo PHP_VERSION;'
 		run --rm $IMAGE sh -c php -m
 		run --rm $IMAGE sh -c apache2ctl -t
 	EOF
 }
 
 @test "every failing check is named" {
-	DOCKER_FAIL='php -' run "$SMOKE_TEST" "$IMAGE" cli
+	DOCKER_FAIL='php -' run "$SMOKE_TEST" "$IMAGE" cli "$VERSION"
 
 	assert_failure 1
 	assert_line "error: 'php -v' failed in $IMAGE"
+	assert_line "error: 'php -r 'echo PHP_VERSION;'' failed in $IMAGE"
 	assert_line "error: 'php -m' failed in $IMAGE"
-	assert_line "error: 2 of 2 smoke checks failed for cli in $IMAGE"
+	assert_line "error: 3 of 3 smoke checks failed for cli in $IMAGE"
 }
 
 # Arguments
 
 @test "an image without a digest is rejected before docker runs" {
 	for image in ghcr.io/specsnl/php ghcr.io/specsnl/php:8.4.13-cli-trixie ghcr.io/specsnl/php@sha256:abc "ghcr.io/specsnl/php@${IMAGE#*@} extra" "${IMAGE%@*}@sha512:${IMAGE#*:}"; do
-		run "$SMOKE_TEST" "$image" cli
+		run "$SMOKE_TEST" "$image" cli "$VERSION"
 
 		assert_failure 2
 		assert_output --partial "error: '$image' is not an image reference by digest"
-		assert_output --partial 'usage: smoke-test.sh <image@digest> <variant>'
+		assert_output --partial 'usage: smoke-test.sh <image@digest> <variant> <php_version>'
+	done
+
+	assert_file_empty "$DOCKER_LOG"
+}
+
+@test "a php_version that is not an exact version is rejected before docker runs" {
+	for version in 8.4 v8.4.13 8.4.13-RC1 8.4.13rc1 '8.4.13 ' 8; do
+		run "$SMOKE_TEST" "$IMAGE" cli "$version"
+
+		assert_failure 2
+		assert_output --partial "error: '$version' is not a PHP version like 8.4.13"
+		assert_output --partial 'usage: smoke-test.sh'
 	done
 
 	assert_file_empty "$DOCKER_LOG"
@@ -162,11 +325,19 @@ assert_docker_calls() {
 	assert_failure 2
 	assert_output --partial 'usage: smoke-test.sh'
 
-	run "$SMOKE_TEST" "$IMAGE" ''
+	run "$SMOKE_TEST" "$IMAGE" cli
 	assert_failure 2
 	assert_output --partial 'usage: smoke-test.sh'
 
-	run "$SMOKE_TEST" "$IMAGE" cli extra
+	run "$SMOKE_TEST" "$IMAGE" '' "$VERSION"
+	assert_failure 2
+	assert_output --partial 'usage: smoke-test.sh'
+
+	run "$SMOKE_TEST" "$IMAGE" cli ''
+	assert_failure 2
+	assert_output --partial 'usage: smoke-test.sh'
+
+	run "$SMOKE_TEST" "$IMAGE" cli "$VERSION" extra
 	assert_failure 2
 	assert_output --partial 'usage: smoke-test.sh'
 
