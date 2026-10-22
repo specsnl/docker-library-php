@@ -28,6 +28,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # An exact version, so setup-task needs no GitHub API call to resolve it.
+  # Latest version: https://github.com/go-task/task/releases
+  TASK_VERSION: 3.54.0
+
 jobs:
   checkall:
     name: Checkall
@@ -39,8 +44,7 @@ jobs:
       - name: Setup Task
         uses: go-task/setup-task@v2
         with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ env.TASK_VERSION }}
 
       - name: Run every check
         run: task checkall
