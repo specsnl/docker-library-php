@@ -33,19 +33,31 @@ on:
 permissions:
   contents: read
 
-env:
-  # GHCR only accepts lowercase repository names.
-  IMAGE: ghcr.io/specsnl/php
-
 jobs:
   prepare:
     name: Prepare
     runs-on: ubuntu-24.04
     outputs:
+      image: ${{ steps.image.outputs.image }}
       matrix: ${{ steps.matrix.outputs.matrix }}
+      directories: ${{ steps.directories.outputs.directories }}
     steps:
+      # 8-fpm, fpm and latest carry no suite, so a run on any other suite than
+      # the default would move them off it.
+      - name: Refuse floating tags for a base override
+        if: inputs.update_floating_tags && inputs.base != ''
+        run: |
+          echo "::error::update_floating_tags also moves the suite-less tags, which follow the default suite; leave base empty to update them"
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Read the image name
+        id: image
+        run: |
+          source scripts/compute-tags.sh
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
       # The fork only adds files, so laying upstream's tree over the checkout
       # gives the same templates and versions.json that merging the ref would.
@@ -69,6 +81,14 @@ jobs:
           VARIANTS: ${{ inputs.variants }}
           BASE: ${{ inputs.base }}
         run: scripts/select-matrix.sh "$PHP_VERSION" "$VARIANTS" "$BASE" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Select the directories to merge
+        id: directories
+        env:
+          MATRIX: ${{ steps.matrix.outputs.matrix }}
+        run: |
+          directories="$(jq -c '{ include: [.include[] | { directory, variant, suite }] | unique }' <<< "$MATRIX")"
+          echo "directories=$directories" | tee -a "$GITHUB_OUTPUT"
 
       # A tarball keeps the executable bits on the docker-php-* scripts, which
       # upload-artifact drops.
@@ -95,6 +115,7 @@ jobs:
     strategy:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
       # Secrets cannot be read in a step condition; this env var can.
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
@@ -174,6 +195,7 @@ jobs:
     strategy:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
       # The digest is an index that also holds the attestations; this picks
       # the platform's image out of it rather than relying on the runner's.
       DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
@@ -207,3 +229,67 @@ jobs:
         run: |
           digests=( "$RUNNER_TEMP"/digests/* )
           scripts/smoke-test.sh "$IMAGE@sha256:${digests[0]##*/}" "$VARIANT"
+
+  merge:
+    name: Merge ${{ matrix.directory }}
+    needs: [prepare, smoke-test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix: ${{ fromJSON(needs.prepare.outputs.directories) }}
+    env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Name the digest artifacts
+        id: artifact
+        env:
+          DIRECTORY: ${{ matrix.directory }}
+        run: echo "pattern=digests-${DIRECTORY//\//-}-*" >> "$GITHUB_OUTPUT"
+
+      - name: Download the digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ steps.artifact.outputs.pattern }}
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute the tags
+        env:
+          PHP_VERSION: ${{ inputs.php_version }}
+          VARIANT: ${{ matrix.variant }}
+          SUITE: ${{ matrix.suite }}
+          UPDATE_FLOATING_TAGS: ${{ inputs.update_floating_tags }}
+        run: scripts/compute-tags.sh "$PHP_VERSION" "$VARIANT" "$SUITE" "$UPDATE_FLOATING_TAGS" | tee "$RUNNER_TEMP/tags"
+
+      # The annotation links the multi-arch package to this repository on
+      # GHCR, as the label does for the single-platform images.
+      - name: Create the manifest list and apply the tags
+        env:
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          args=( --annotation "index:org.opencontainers.image.source=$SOURCE" )
+          while read -r tag; do
+            args+=( --tag "$tag" )
+          done < "$RUNNER_TEMP/tags"
+          for digest in "$RUNNER_TEMP"/digests/*; do
+            args+=( "$IMAGE@sha256:${digest##*/}" )
+          done
+          docker buildx imagetools create "${args[@]}"
+
+      - name: Inspect the image
+        run: docker buildx imagetools inspect "$(head -n 1 "$RUNNER_TEMP/tags")"
