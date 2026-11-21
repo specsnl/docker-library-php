@@ -4,7 +4,7 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
-FROM debian:trixie-slim
+FROM debian:bookworm-slim
 
 # prevent Debian's PHP packages from being installed
 # https://github.com/docker-library/php/pull/542
@@ -37,7 +37,7 @@ RUN set -eux; \
 		curl \
 		xz-utils \
 	; \
-	apt-get dist-clean
+	rm -rf /var/lib/apt/lists/*
 
 ENV PHP_INI_DIR /usr/local/etc/php
 RUN set -eux; \
@@ -60,16 +60,16 @@ ENV PHP_LDFLAGS="-Wl,-O1 -pie"
 
 ENV GPG_KEYS D95C03BC702BE9515344AE3374E44BC9067701A5 016895DE9A475111D537A6E69134FF30BC5A99B5 5CFF17B64DC1C244F5D0EAC3E43535E2EB19010E
 
-ENV PHP_VERSION 8.6.0RC3
-ENV PHP_URL="https://downloads.php.net/~svpernova09/php-8.6.0RC3.tar.xz" PHP_ASC_URL="https://downloads.php.net/~svpernova09/php-8.6.0RC3.tar.xz.asc"
-ENV PHP_SHA256="131f87a206bdd90c178d8e44e80243ae0c333c4cee8531f63d1caa9acdd8696a"
+ENV PHP_VERSION 8.6.0
+ENV PHP_URL="https://www.php.net/distributions/php-8.6.0.tar.xz" PHP_ASC_URL="https://www.php.net/distributions/php-8.6.0.tar.xz.asc"
+ENV PHP_SHA256="5f84beaa3d763aee1e4feed99bf54ec692c383b322e25626807b589238c3a087"
 
 RUN set -eux; \
 	\
 	savedAptMark="$(apt-mark showmanual)"; \
 	apt-get update; \
 	apt-get install -y --no-install-recommends gnupg; \
-	apt-get dist-clean; \
+	rm -rf /var/lib/apt/lists/*; \
 	\
 	mkdir -p /usr/src; \
 	cd /usr/src; \
@@ -214,7 +214,7 @@ RUN set -eux; \
 		| xargs -r apt-mark manual \
 	; \
 	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
-	apt-get dist-clean; \
+	rm -rf /var/lib/apt/lists/*; \
 	\
 # smoke test
 	php --version
